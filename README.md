@@ -26,6 +26,10 @@ Copy-Item config\settings.example.yaml config\settings.yaml
 KIS Developers에서 발급한 키는 파일에 쓰지 말고 현재 PowerShell 세션의
 환경변수에만 설정합니다. 화면 공유, 셸 기록, 로그 노출에 주의하십시오.
 
+GUI에서 발급한 접근 토큰도 만료시각과 함께 Windows 자격 증명 저장소에
+보관하여 재시작 때 불필요하게 재발급하지 않습니다. 시세 API는 호출 간격을
+제어하고 일시적인 서버 오류에 한해 제한적으로 재시도합니다.
+
 ```powershell
 $env:KIS_APP_KEY = "발급받은 App Key"
 $env:KIS_APP_SECRET = "발급받은 App Secret"
