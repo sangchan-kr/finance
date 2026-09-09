@@ -1,0 +1,30 @@
+mode: market-data-only
+market_data_environment: real
+account_environment: paper
+order_enabled: false
+
+kis:
+  app_key_env: KIS_APP_KEY
+  app_secret_env: KIS_APP_SECRET
+  account_no_env: KIS_ACCOUNT_NO
+  product_code: "01"
+  timeout_seconds: 10
+
+storage:
+  database_path: data/trading.db
+
+risk:
+  allowed_symbols: []
+  max_symbols_per_day: 3
+  max_order_amount: 0
+  max_daily_investment: 0
+  max_daily_loss: 0
+  max_spread_bps: 50
+  stop_file: STOP_TRADING
+
+live_trading:
+  unlock_required: true
+  unlock_env: LIVE_TRADING_UNLOCK
+  unlock_value_env: LIVE_TRADING_UNLOCK_EXPECTED
+  account_allowlist: []
+
