@@ -17,3 +17,8 @@ def test_secrets_are_environment_variable_names(tmp_path, monkeypatch):
     monkeypatch.setenv("TEST_KIS_SECRET", "secret")
     assert settings.kis.credentials() == ("key", "secret")
 
+
+def test_collection_limit_is_separate_from_trading_limit(tmp_path):
+    settings = make_settings(tmp_path)
+    assert settings.collection.max_symbols == 40
+    assert settings.risk.max_symbols_per_day == 3

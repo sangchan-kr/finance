@@ -46,6 +46,13 @@ class StorageSettings:
 
 
 @dataclass(frozen=True)
+class CollectionSettings:
+    symbols: tuple[str, ...]
+    max_symbols: int
+    interval_seconds: int
+
+
+@dataclass(frozen=True)
 class RiskSettings:
     allowed_symbols: frozenset[str]
     max_symbols_per_day: int
@@ -73,6 +80,7 @@ class Settings:
     order_enabled: bool
     kis: KisSettings
     storage: StorageSettings
+    collection: CollectionSettings
     risk: RiskSettings
     live_trading: LiveTradingSettings
 
@@ -126,6 +134,7 @@ def load_settings(path: str | Path) -> Settings:
     root = config_path.parent.parent
     kis = _required(raw, "kis")
     storage = _required(raw, "storage")
+    collection = raw.get("collection", {})
     risk = _required(raw, "risk")
     live = _required(raw, "live_trading")
     mode = raw.get("mode", "market-data-only")
@@ -148,6 +157,11 @@ def load_settings(path: str | Path) -> Settings:
             timeout_seconds=float(kis.get("timeout_seconds", 10)),
         ),
         storage=StorageSettings(database_path=root / _required(storage, "database_path")),
+        collection=CollectionSettings(
+            symbols=tuple(str(x) for x in collection.get("symbols", ["005930"])),
+            max_symbols=int(collection.get("max_symbols", 40)),
+            interval_seconds=int(collection.get("interval_seconds", 60)),
+        ),
         risk=RiskSettings(
             allowed_symbols=frozenset(str(x) for x in risk.get("allowed_symbols", [])),
             max_symbols_per_day=int(risk.get("max_symbols_per_day", 3)),

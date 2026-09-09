@@ -20,6 +20,7 @@ from .kis_client import KisClient
 from .ledger import Ledger
 from .market_data import MarketData
 from .secrets import Credentials, SecretStore, SecretStoreError
+from .symbol_catalog import Symbol, SymbolCatalog
 
 
 class TraderApp:
@@ -30,6 +31,11 @@ class TraderApp:
         self.ledger = Ledger(settings.storage.database_path)
         self.ledger.initialize()
         self.secret_store = SecretStore()
+        self.catalog = SymbolCatalog(
+            settings.project_root / ".master" / "symbols.json",
+            settings.project_root / "config" / "symbols.yaml",
+        )
+        self.catalog.load()
         self.collector: BackgroundCollector | None = None
         self.tray_icon: pystray.Icon | None = None
         self.events: queue.Queue[tuple[str, Any]] = queue.Queue()
@@ -67,20 +73,24 @@ class TraderApp:
         notebook = ttk.Notebook(shell)
         notebook.pack(fill="both", expand=True)
         dashboard = ttk.Frame(notebook, padding=14)
+        symbols = ttk.Frame(notebook, padding=14)
         connection = ttk.Frame(notebook, padding=14)
         notebook.add(dashboard, text="대시보드")
+        notebook.add(symbols, text="종목 선택")
         notebook.add(connection, text="API 연결")
         self._build_dashboard(dashboard)
+        self._build_symbol_selector(symbols)
         self._build_connection(connection)
 
     def _build_dashboard(self, parent: ttk.Frame) -> None:
         controls = ttk.Frame(parent)
         controls.pack(fill="x", pady=(0, 12))
-        ttk.Label(controls, text="수집 종목", style="Section.TLabel").pack(side="left")
-        self.symbols_var = tk.StringVar(value="005930, 009150, 042660")
-        ttk.Entry(controls, textvariable=self.symbols_var, width=34).pack(side="left", padx=10)
+        self.collection_summary_var = tk.StringVar()
+        ttk.Label(controls, textvariable=self.collection_summary_var, style="Section.TLabel").pack(
+            side="left"
+        )
         ttk.Label(controls, text="주기(초)").pack(side="left", padx=(10, 4))
-        self.interval_var = tk.IntVar(value=60)
+        self.interval_var = tk.IntVar(value=self.settings.collection.interval_seconds)
         ttk.Spinbox(controls, from_=5, to=3600, textvariable=self.interval_var, width=7).pack(
             side="left"
         )
@@ -111,6 +121,111 @@ class TraderApp:
         )
         self.log = tk.Text(parent, height=8, state="disabled", font=("Consolas", 9), wrap="word")
         self.log.pack(fill="x")
+
+    def _build_symbol_selector(self, parent: ttk.Frame) -> None:
+        toolbar = ttk.Frame(parent)
+        toolbar.pack(fill="x", pady=(0, 10))
+        ttk.Label(toolbar, text="종목 검색", style="Section.TLabel").pack(side="left")
+        self.symbol_search_var = tk.StringVar()
+        search = ttk.Entry(toolbar, textvariable=self.symbol_search_var, width=30)
+        search.pack(side="left", padx=10)
+        search.bind("<KeyRelease>", lambda _event: self._filter_catalog())
+        ttk.Button(toolbar, text="종목 마스터 갱신", command=self.refresh_symbol_catalog).pack(
+            side="right"
+        )
+
+        panes = ttk.Panedwindow(parent, orient="horizontal")
+        panes.pack(fill="both", expand=True)
+        available = ttk.Frame(panes, padding=(0, 0, 8, 0))
+        selected = ttk.Frame(panes, padding=(8, 0, 0, 0))
+        panes.add(available, weight=1)
+        panes.add(selected, weight=1)
+        ttk.Label(available, text="검색 결과").pack(anchor="w", pady=(0, 6))
+        ttk.Label(selected, text="수집 대상").pack(anchor="w", pady=(0, 6))
+        columns = ("code", "name", "market")
+        self.available_tree = ttk.Treeview(available, columns=columns, show="headings", height=15)
+        self.selected_tree = ttk.Treeview(selected, columns=columns, show="headings", height=15)
+        for tree in (self.available_tree, self.selected_tree):
+            for key, label, width in (
+                ("code", "종목코드", 90),
+                ("name", "종목명", 180),
+                ("market", "시장", 75),
+            ):
+                tree.heading(key, text=label)
+                tree.column(key, width=width, anchor="center" if key != "name" else "w")
+            tree.pack(fill="both", expand=True)
+        self.available_tree.bind("<Double-1>", lambda _event: self.add_selected_symbols())
+        self.selected_tree.bind("<Double-1>", lambda _event: self.remove_selected_symbols())
+
+        actions = ttk.Frame(parent)
+        actions.pack(fill="x", pady=(10, 0))
+        ttk.Button(actions, text="선택 추가 →", command=self.add_selected_symbols).pack(side="left")
+        ttk.Button(actions, text="← 선택 제거", command=self.remove_selected_symbols).pack(
+            side="left", padx=8
+        )
+        self.selection_info_var = tk.StringVar()
+        ttk.Label(actions, textvariable=self.selection_info_var).pack(side="right")
+        self._filter_catalog()
+        known = {item.code: item for item in self.catalog.symbols}
+        for code in self.settings.collection.symbols:
+            symbol = known.get(code, Symbol(code, code, "KRX"))
+            self._insert_symbol(self.selected_tree, symbol)
+        self._update_collection_summary()
+
+    @staticmethod
+    def _insert_symbol(tree: ttk.Treeview, symbol: Symbol) -> None:
+        if tree.exists(symbol.code):
+            return
+        tree.insert("", "end", iid=symbol.code, values=(symbol.code, symbol.name, symbol.market))
+
+    def _filter_catalog(self) -> None:
+        if not hasattr(self, "available_tree"):
+            return
+        for item in self.available_tree.get_children():
+            self.available_tree.delete(item)
+        for symbol in self.catalog.search(self.symbol_search_var.get(), limit=200):
+            self._insert_symbol(self.available_tree, symbol)
+
+    def add_selected_symbols(self) -> None:
+        current = set(self.selected_tree.get_children())
+        additions = [item for item in self.available_tree.selection() if item not in current]
+        if len(current) + len(additions) > self.settings.collection.max_symbols:
+            messagebox.showwarning(
+                "선택 제한",
+                f"수집 종목은 최대 {self.settings.collection.max_symbols}개입니다.",
+                parent=self.root,
+            )
+            return
+        for item in additions:
+            values = self.available_tree.item(item, "values")
+            self.selected_tree.insert("", "end", iid=item, values=values)
+        self._update_collection_summary()
+
+    def remove_selected_symbols(self) -> None:
+        for item in self.selected_tree.selection():
+            self.selected_tree.delete(item)
+        self._update_collection_summary()
+
+    def _update_collection_summary(self) -> None:
+        count = len(self.selected_tree.get_children())
+        per_request = 1.05 if self.settings.market_data_environment == "demo" else 0.25
+        seconds = count * per_request
+        self.collection_summary_var.set(f"수집 종목 {count}개")
+        self.selection_info_var.set(
+            f"{count}/{self.settings.collection.max_symbols}개 · 1회 예상 {seconds:.1f}초"
+        )
+
+    def refresh_symbol_catalog(self) -> None:
+        self.selection_info_var.set("공식 종목 마스터 갱신 중...")
+
+        def work() -> None:
+            try:
+                symbols = self.catalog.refresh()
+                self.events.put(("catalog", len(symbols)))
+            except Exception as exc:
+                self.events.put(("catalog_error", str(exc)))
+
+        threading.Thread(target=work, name="kis-symbol-master", daemon=True).start()
 
     def _build_connection(self, parent: ttk.Frame) -> None:
         form = ttk.Frame(parent)
@@ -200,6 +315,7 @@ class TraderApp:
         self.config_path.write_text(
             yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8"
         )
+        self._update_collection_summary()
 
     def save_credentials(self) -> bool:
         try:
@@ -234,14 +350,24 @@ class TraderApp:
         threading.Thread(target=work, name="kis-connection-test", daemon=True).start()
 
     def _parse_symbols(self) -> list[str]:
-        symbols = [item.strip() for item in self.symbols_var.get().split(",") if item.strip()]
+        symbols = list(self.selected_tree.get_children())
         if not symbols:
-            raise ValueError("수집 종목을 입력하세요")
-        if len(symbols) > self.settings.risk.max_symbols_per_day:
-            raise ValueError(f"종목은 최대 {self.settings.risk.max_symbols_per_day}개입니다")
+            raise ValueError("수집 종목을 선택하세요")
+        if len(symbols) > self.settings.collection.max_symbols:
+            raise ValueError(f"수집 종목은 최대 {self.settings.collection.max_symbols}개입니다")
         if any(not value.isdigit() or len(value) != 6 for value in symbols):
             raise ValueError("종목코드는 6자리 숫자여야 합니다")
-        return list(dict.fromkeys(symbols))
+        return symbols
+
+    def _save_collection_settings(self, symbols: list[str], interval: int) -> None:
+        raw = yaml.safe_load(self.config_path.read_text(encoding="utf-8")) or {}
+        collection = raw.setdefault("collection", {})
+        collection["symbols"] = symbols
+        collection["max_symbols"] = self.settings.collection.max_symbols
+        collection["interval_seconds"] = interval
+        self.config_path.write_text(
+            yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
 
     def start_collection(self) -> None:
         try:
@@ -253,6 +379,7 @@ class TraderApp:
         except (ConfigError, SecretStoreError, ValueError) as exc:
             messagebox.showerror("수집 시작 실패", str(exc), parent=self.root)
             return
+        self._save_collection_settings(symbols, interval)
         self.collector = BackgroundCollector(
             self.settings,
             self.ledger,
@@ -298,6 +425,14 @@ class TraderApp:
             elif kind == "exit":
                 self.exit_app()
                 return
+            elif kind == "catalog":
+                self._filter_catalog()
+                self._update_collection_summary()
+                self._write_log(f"공식 종목 마스터 {payload:,}개를 갱신했습니다.")
+            elif kind == "catalog_error":
+                self._update_collection_summary()
+                self._write_log(f"종목 마스터 갱신 실패: {payload}")
+                messagebox.showerror("종목 마스터", str(payload), parent=self.root)
         if not self.exiting:
             self.root.after(150, self._drain_events)
 

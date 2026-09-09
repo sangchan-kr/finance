@@ -30,8 +30,7 @@ class AccessToken:
 
 class KisClient:
     _request_lock = threading.Lock()
-    _last_request_at = 0.0
-    _minimum_request_interval = 0.25
+    _last_request_at: dict[str, float] = {"real": 0.0, "demo": 0.0}
 
     def __init__(self, settings: Settings, transport: httpx.BaseTransport | None = None):
         self.settings = settings
@@ -116,14 +115,15 @@ class KisClient:
         except KeyringError:
             pass
 
-    @classmethod
-    def _pace_request(cls) -> None:
-        with cls._request_lock:
+    def _pace_request(self) -> None:
+        environment = self.settings.market_data_environment
+        minimum_interval = 1.05 if environment == "demo" else 0.25
+        with self._request_lock:
             now = time.monotonic()
-            delay = cls._minimum_request_interval - (now - cls._last_request_at)
+            delay = minimum_interval - (now - self._last_request_at[environment])
             if delay > 0:
                 time.sleep(delay)
-            cls._last_request_at = time.monotonic()
+            self._last_request_at[environment] = time.monotonic()
 
     @staticmethod
     def _error_message(status_code: int, body: Any, operation: str) -> str:
@@ -169,4 +169,3 @@ class KisClient:
                 raise KisApiError(f"KIS rejected request [{code}]: {message}")
             return body
         raise KisApiError(f"KIS request failed after retries: {path}")
-

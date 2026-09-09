@@ -19,6 +19,11 @@ def make_settings(tmp_path: Path, **overrides):
             "account_no_env": "TEST_KIS_ACCOUNT",
         },
         "storage": {"database_path": "data/test.db"},
+        "collection": {
+            "symbols": ["005930"],
+            "max_symbols": 40,
+            "interval_seconds": 60,
+        },
         "risk": {
             "allowed_symbols": ["005930"],
             "max_symbols_per_day": 3,
