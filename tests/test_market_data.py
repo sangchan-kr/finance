@@ -25,6 +25,15 @@ def test_historical_minutes_formats_date():
     assert client.calls[0][2]["FID_INPUT_DATE_1"] == "20260909"
 
 
+def test_daily_prices_uses_official_chart_endpoint():
+    client = FakeClient()
+    MarketData(client).daily_prices("005930", date(2026, 8, 1), date(2026, 9, 9))
+    path, tr_id, params = client.calls[0]
+    assert path.endswith("inquire-daily-itemchartprice")
+    assert tr_id == "FHKST03010100"
+    assert params["FID_INPUT_DATE_1"] == "20260801"
+
+
 def test_invalid_symbol_is_rejected_before_api_call():
     client = FakeClient()
     try:
@@ -34,4 +43,3 @@ def test_invalid_symbol_is_rejected_before_api_call():
     else:
         raise AssertionError("expected ValueError")
     assert not client.calls
-

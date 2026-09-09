@@ -5,13 +5,17 @@ import queue
 import threading
 import tkinter as tk
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Any
 
 import pystray
 import yaml
+from matplotlib import rcParams
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+from matplotlib.ticker import FuncFormatter
 from PIL import Image, ImageDraw
 
 from .collector import BackgroundCollector, Snapshot
@@ -52,6 +56,8 @@ class TraderApp:
         self.root.after(150, self._drain_events)
 
     def _configure_style(self) -> None:
+        rcParams["font.family"] = "Malgun Gothic"
+        rcParams["axes.unicode_minus"] = False
         style = ttk.Style(self.root)
         if "vista" in style.theme_names():
             style.theme_use("vista")
@@ -101,26 +107,161 @@ class TraderApp:
         )
         self.stop_button.pack(side="right", padx=8)
 
-        columns = ("time", "symbol", "price", "change", "volume")
-        self.tree = ttk.Treeview(parent, columns=columns, show="headings", height=13)
-        headings = {
-            "time": "수집시각",
-            "symbol": "종목코드",
-            "price": "현재가",
-            "change": "등락률(%)",
-            "volume": "누적거래량",
-        }
-        widths = {"time": 190, "symbol": 100, "price": 130, "change": 110, "volume": 150}
-        for name in columns:
-            self.tree.heading(name, text=headings[name])
-            self.tree.column(name, width=widths[name], anchor="center")
-        self.tree.pack(fill="both", expand=True)
+        workspace = ttk.Panedwindow(parent, orient="horizontal")
+        workspace.pack(fill="both", expand=True)
+        watch_panel = ttk.Frame(workspace, padding=(0, 0, 10, 0))
+        chart_panel = ttk.Frame(workspace, padding=(10, 0, 0, 0))
+        workspace.add(watch_panel, weight=2)
+        workspace.add(chart_panel, weight=5)
+
+        ttk.Label(watch_panel, text="관심종목", style="Section.TLabel").pack(
+            anchor="w", pady=(0, 6)
+        )
+        columns = ("name", "code", "price", "change", "volume")
+        self.watch_tree = ttk.Treeview(watch_panel, columns=columns, show="headings", height=16)
+        for key, label, width, anchor in (
+            ("name", "종목명", 135, "w"),
+            ("code", "코드", 72, "center"),
+            ("price", "현재가", 88, "e"),
+            ("change", "등락률", 68, "e"),
+            ("volume", "거래량", 95, "e"),
+        ):
+            self.watch_tree.heading(key, text=label)
+            self.watch_tree.column(key, width=width, minwidth=55, anchor=anchor)
+        self.watch_tree.tag_configure("rise", foreground="#c62828")
+        self.watch_tree.tag_configure("fall", foreground="#1565c0")
+        self.watch_tree.pack(fill="both", expand=True)
+        self.watch_tree.bind("<<TreeviewSelect>>", self._on_watch_selected)
+
+        quote_header = ttk.Frame(chart_panel)
+        quote_header.pack(fill="x", pady=(0, 6))
+        self.quote_name_var = tk.StringVar(value="종목을 선택하세요")
+        self.quote_price_var = tk.StringVar(value="-")
+        self.quote_change_var = tk.StringVar(value="-")
+        ttk.Label(quote_header, textvariable=self.quote_name_var, style="Section.TLabel").pack(
+            side="left"
+        )
+        ttk.Label(quote_header, textvariable=self.quote_price_var, font=("Segoe UI", 16, "bold")).pack(
+            side="left", padx=(18, 8)
+        )
+        self.quote_change_label = ttk.Label(quote_header, textvariable=self.quote_change_var)
+        self.quote_change_label.pack(side="left")
+        ranges = ttk.Frame(quote_header)
+        ranges.pack(side="right")
+        self.chart_days = 90
+        for label, days in (("1개월", 31), ("3개월", 93), ("1년", 366)):
+            ttk.Button(ranges, text=label, width=7, command=lambda value=days: self._set_chart_range(value)).pack(
+                side="left", padx=(4, 0)
+            )
+
+        self.figure = Figure(figsize=(7, 4.6), dpi=100, facecolor="#ffffff")
+        grid = self.figure.add_gridspec(4, 1, hspace=0.08)
+        self.price_axis = self.figure.add_subplot(grid[:3, 0])
+        self.volume_axis = self.figure.add_subplot(grid[3, 0], sharex=self.price_axis)
+        self.chart_canvas = FigureCanvasTkAgg(self.figure, master=chart_panel)
+        self.chart_canvas.get_tk_widget().pack(fill="both", expand=True)
+        self._draw_empty_chart("관심종목을 선택하면 일봉 차트를 조회합니다")
 
         ttk.Label(parent, text="운영 로그", style="Section.TLabel").pack(
             fill="x", pady=(14, 6)
         )
-        self.log = tk.Text(parent, height=8, state="disabled", font=("Consolas", 9), wrap="word")
+        self.log = tk.Text(parent, height=5, state="disabled", font=("Consolas", 9), wrap="word")
         self.log.pack(fill="x")
+
+    def _draw_empty_chart(self, message: str) -> None:
+        self.price_axis.clear()
+        self.volume_axis.clear()
+        self.price_axis.text(
+            0.5, 0.5, message, transform=self.price_axis.transAxes, ha="center", va="center", color="#666666"
+        )
+        self.price_axis.set_xticks([])
+        self.price_axis.set_yticks([])
+        self.volume_axis.set_visible(False)
+        self.chart_canvas.draw_idle()
+
+    def _set_chart_range(self, days: int) -> None:
+        self.chart_days = days
+        selected = self.watch_tree.selection()
+        if selected:
+            self._request_quote_history(selected[0])
+
+    def _on_watch_selected(self, _event: object = None) -> None:
+        selected = self.watch_tree.selection()
+        if selected:
+            self._request_quote_history(selected[0])
+
+    def _request_quote_history(self, symbol: str) -> None:
+        values = self.watch_tree.item(symbol, "values")
+        name = str(values[0]) if values else symbol
+        self.quote_name_var.set(f"{name}  {symbol}")
+        self._draw_empty_chart("일봉 데이터를 불러오는 중입니다")
+
+        def work() -> None:
+            try:
+                self.secret_store.apply_to_environment(self.settings)
+                end = date.today()
+                start = end - timedelta(days=self.chart_days)
+                with KisClient(self.settings) as client:
+                    market = MarketData(client)
+                    quote = market.current_price(symbol)
+                    history = market.daily_prices(symbol, start, end)
+                self.events.put(("history", (symbol, name, quote, history)))
+            except Exception as exc:
+                self.events.put(("history_error", (symbol, str(exc))))
+
+        threading.Thread(target=work, name=f"kis-chart-{symbol}", daemon=True).start()
+
+    def _render_history(self, symbol: str, name: str, quote: dict, rows: list[dict]) -> None:
+        selected = self.watch_tree.selection()
+        if selected and selected[0] != symbol:
+            return
+        parsed = []
+        for row in rows:
+            try:
+                parsed.append(
+                    (
+                        datetime.strptime(row["stck_bsop_date"], "%Y%m%d"),
+                        int(row["stck_clpr"]),
+                        int(row.get("acml_vol", 0)),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        parsed.sort(key=lambda item: item[0])
+        price = str(quote.get("stck_prpr", ""))
+        change = str(quote.get("prdy_ctrt", ""))
+        self.quote_name_var.set(f"{name}  {symbol}")
+        self.quote_price_var.set(f"{int(price):,}원" if price.isdigit() else price or "-")
+        self.quote_change_var.set(f"{change}%")
+        if not parsed:
+            self._draw_empty_chart("표시할 일봉 데이터가 없습니다")
+            return
+        dates = [item[0] for item in parsed]
+        closes = [item[1] for item in parsed]
+        volumes = [item[2] for item in parsed]
+        ma5 = [sum(closes[max(0, index - 4) : index + 1]) / min(5, index + 1) for index in range(len(closes))]
+        ma20 = [sum(closes[max(0, index - 19) : index + 1]) / min(20, index + 1) for index in range(len(closes))]
+        self.price_axis.clear()
+        self.volume_axis.clear()
+        self.volume_axis.set_visible(True)
+        self.price_axis.plot(dates, closes, color="#202124", linewidth=1.5, label="종가")
+        self.price_axis.plot(dates, ma5, color="#d32f2f", linewidth=1.0, label="MA5")
+        self.price_axis.plot(dates, ma20, color="#1976d2", linewidth=1.0, label="MA20")
+        self.price_axis.grid(True, color="#e5e7eb", linewidth=0.7)
+        self.price_axis.legend(loc="upper left", frameon=False, ncol=3, fontsize=8)
+        self.price_axis.tick_params(axis="x", labelbottom=False)
+        self.price_axis.ticklabel_format(axis="y", style="plain", useOffset=False)
+        self.price_axis.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: f"{value:,.0f}"))
+        bar_colors = ["#c62828" if index == 0 or closes[index] >= closes[index - 1] else "#1565c0" for index in range(len(closes))]
+        self.volume_axis.bar(dates, volumes, color=bar_colors, width=0.8, alpha=0.65)
+        self.volume_axis.grid(True, axis="y", color="#eeeeee", linewidth=0.6)
+        self.volume_axis.tick_params(axis="x", labelrotation=0, labelsize=8)
+        self.volume_axis.tick_params(axis="y", labelsize=8)
+        self.volume_axis.yaxis.set_major_formatter(
+            FuncFormatter(lambda value, _pos: f"{value / 1_000_000:.1f}M")
+        )
+        self.figure.autofmt_xdate(rotation=0)
+        self.chart_canvas.draw_idle()
 
     def _build_symbol_selector(self, parent: ttk.Frame) -> None:
         toolbar = ttk.Frame(parent)
@@ -214,6 +355,20 @@ class TraderApp:
         self.selection_info_var.set(
             f"{count}/{self.settings.collection.max_symbols}개 · 1회 예상 {seconds:.1f}초"
         )
+        self._sync_watchlist()
+
+    def _sync_watchlist(self) -> None:
+        if not hasattr(self, "watch_tree") or not hasattr(self, "selected_tree"):
+            return
+        selected = set(self.selected_tree.get_children())
+        for item in self.watch_tree.get_children():
+            if item not in selected:
+                self.watch_tree.delete(item)
+        for code in self.selected_tree.get_children():
+            values = self.selected_tree.item(code, "values")
+            name = str(values[1]) if len(values) > 1 else code
+            if not self.watch_tree.exists(code):
+                self.watch_tree.insert("", "end", iid=code, values=(name, code, "-", "-", "-"))
 
     def refresh_symbol_catalog(self) -> None:
         self.selection_info_var.set("공식 종목 마스터 갱신 중...")
@@ -433,24 +588,40 @@ class TraderApp:
                 self._update_collection_summary()
                 self._write_log(f"종목 마스터 갱신 실패: {payload}")
                 messagebox.showerror("종목 마스터", str(payload), parent=self.root)
+            elif kind == "history":
+                self._render_history(*payload)
+            elif kind == "history_error":
+                symbol, message = payload
+                selected = self.watch_tree.selection()
+                if not selected or selected[0] == symbol:
+                    self._draw_empty_chart("일봉 조회에 실패했습니다")
+                self._write_log(f"{symbol} 일봉 조회 실패: {message}")
         if not self.exiting:
             self.root.after(150, self._drain_events)
 
     def _insert_snapshot(self, snapshot: Snapshot) -> None:
-        self.tree.insert(
-            "",
-            0,
-            values=(
-                snapshot.collected_at.replace("T", " "),
-                snapshot.symbol,
-                f"{int(snapshot.price):,}" if snapshot.price.isdigit() else snapshot.price,
-                snapshot.change_rate,
-                snapshot.volume,
-            ),
+        symbol_info = next(
+            (item for item in self.catalog.symbols if item.code == snapshot.symbol), None
         )
-        children = self.tree.get_children()
-        for item in children[200:]:
-            self.tree.delete(item)
+        name = symbol_info.name if symbol_info else snapshot.symbol
+        price = f"{int(snapshot.price):,}" if snapshot.price.isdigit() else snapshot.price
+        volume = f"{int(snapshot.volume):,}" if snapshot.volume.isdigit() else snapshot.volume
+        try:
+            change_value = float(snapshot.change_rate)
+        except ValueError:
+            change_value = 0.0
+        tag = "rise" if change_value > 0 else "fall" if change_value < 0 else ""
+        values = (name, snapshot.symbol, price, f"{snapshot.change_rate}%", volume)
+        if self.watch_tree.exists(snapshot.symbol):
+            self.watch_tree.item(snapshot.symbol, values=values, tags=(tag,))
+        else:
+            self.watch_tree.insert(
+                "", "end", iid=snapshot.symbol, values=values, tags=(tag,)
+            )
+        selected = self.watch_tree.selection()
+        if selected and selected[0] == snapshot.symbol:
+            self.quote_price_var.set(f"{price}원")
+            self.quote_change_var.set(f"{snapshot.change_rate}%")
 
     def _load_recent_snapshots(self) -> None:
         for row in reversed(self.ledger.recent_snapshots(100)):

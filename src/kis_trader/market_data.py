@@ -24,6 +24,29 @@ class MarketData:
         )
         return body["output"]
 
+    def daily_prices(
+        self,
+        symbol: str,
+        from_date: date,
+        to_date: date,
+        market: str = "J",
+    ) -> list[dict[str, Any]]:
+        if from_date > to_date:
+            raise ValueError("from_date cannot be after to_date")
+        body = self.client.get(
+            "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+            "FHKST03010100",
+            {
+                "FID_COND_MRKT_DIV_CODE": market,
+                "FID_INPUT_ISCD": self._symbol(symbol),
+                "FID_INPUT_DATE_1": from_date.strftime("%Y%m%d"),
+                "FID_INPUT_DATE_2": to_date.strftime("%Y%m%d"),
+                "FID_PERIOD_DIV_CODE": "D",
+                "FID_ORG_ADJ_PRC": "0",
+            },
+        )
+        return body.get("output2", [])
+
     def intraday_minutes(
         self, symbol: str, before: time = time(15, 30), market: str = "J"
     ) -> list[dict[str, Any]]:
@@ -68,4 +91,3 @@ class MarketData:
             },
         )
         return body.get("output", [])
-
