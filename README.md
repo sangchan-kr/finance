@@ -47,6 +47,9 @@ $env:KIS_ACCOUNT_NO = "계좌 앞 8자리"
 uv run kis-trader-gui
 ```
 
+콘솔 창을 남기지 않고 독립 실행하려면 `start_gui.ps1`을 실행합니다. 이 런처는
+프로젝트 가상환경의 `pythonw`로 GUI를 시작한 뒤 PowerShell을 즉시 종료합니다.
+
 `config/settings.yaml`이 없으면 예제 설정을 바탕으로 자동 생성됩니다. `API 연결`
 탭에서 App Key, App Secret, 계좌번호와 실전/모의 시세 환경을 지정한 뒤 연결을
 확인합니다. `종목 선택` 탭에서 공식 KOSPI/KOSDAQ 종목 마스터를 갱신하고
