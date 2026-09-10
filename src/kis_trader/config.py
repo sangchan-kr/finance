@@ -53,6 +53,19 @@ class CollectionSettings:
 
 
 @dataclass(frozen=True)
+class SimulationSettings:
+    enabled: bool
+    starting_cash: int
+    allocation_per_trade: int
+    max_data_delay_seconds: int
+    fill_participation_rate: float
+    commission_rate: float
+    sell_tax_rate: float
+    fallback_spread_bps: int
+    strategies: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class RiskSettings:
     allowed_symbols: frozenset[str]
     max_symbols_per_day: int
@@ -81,6 +94,7 @@ class Settings:
     kis: KisSettings
     storage: StorageSettings
     collection: CollectionSettings
+    simulation: SimulationSettings
     risk: RiskSettings
     live_trading: LiveTradingSettings
 
@@ -135,6 +149,7 @@ def load_settings(path: str | Path) -> Settings:
     kis = _required(raw, "kis")
     storage = _required(raw, "storage")
     collection = raw.get("collection", {})
+    simulation = raw.get("simulation", {})
     risk = _required(raw, "risk")
     live = _required(raw, "live_trading")
     mode = raw.get("mode", "market-data-only")
@@ -161,6 +176,17 @@ def load_settings(path: str | Path) -> Settings:
             symbols=tuple(str(x) for x in collection.get("symbols", ["005930"])),
             max_symbols=int(collection.get("max_symbols", 40)),
             interval_seconds=int(collection.get("interval_seconds", 60)),
+        ),
+        simulation=SimulationSettings(
+            enabled=bool(simulation.get("enabled", True)),
+            starting_cash=int(simulation.get("starting_cash", 10_000_000)),
+            allocation_per_trade=int(simulation.get("allocation_per_trade", 1_000_000)),
+            max_data_delay_seconds=int(simulation.get("max_data_delay_seconds", 10)),
+            fill_participation_rate=float(simulation.get("fill_participation_rate", 0.25)),
+            commission_rate=float(simulation.get("commission_rate", 0.00015)),
+            sell_tax_rate=float(simulation.get("sell_tax_rate", 0.0018)),
+            fallback_spread_bps=int(simulation.get("fallback_spread_bps", 10)),
+            strategies=dict(simulation.get("strategies", {})),
         ),
         risk=RiskSettings(
             allowed_symbols=frozenset(str(x) for x in risk.get("allowed_symbols", [])),

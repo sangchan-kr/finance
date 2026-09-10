@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -95,6 +95,107 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_market_snapshots_symbol_time
 ON market_snapshots(symbol, collected_at DESC);
+
+CREATE TABLE IF NOT EXISTS simulation_events (
+    event_id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    ended_at TEXT NOT NULL,
+    processed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS simulation_bars (
+    event_id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT NOT NULL,
+    open TEXT NOT NULL,
+    high TEXT NOT NULL,
+    low TEXT NOT NULL,
+    close TEXT NOT NULL,
+    volume INTEGER NOT NULL,
+    bid TEXT,
+    ask TEXT,
+    bid_quantity INTEGER,
+    ask_quantity INTEGER,
+    received_at TEXT NOT NULL,
+    FOREIGN KEY (event_id) REFERENCES simulation_events(event_id)
+);
+
+CREATE TABLE IF NOT EXISTS virtual_accounts (
+    strategy_id TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    starting_cash TEXT NOT NULL,
+    cash TEXT NOT NULL,
+    realized_pnl TEXT NOT NULL DEFAULT '0',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (strategy_id, strategy_version)
+);
+
+CREATE TABLE IF NOT EXISTS virtual_positions (
+    strategy_id TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    average_price TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (strategy_id, strategy_version, symbol)
+);
+
+CREATE TABLE IF NOT EXISTS virtual_signals (
+    signal_id TEXT PRIMARY KEY,
+    strategy_id TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+    created_at TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    FOREIGN KEY (event_id) REFERENCES simulation_events(event_id)
+);
+
+CREATE TABLE IF NOT EXISTS virtual_orders (
+    order_id TEXT PRIMARY KEY,
+    signal_id TEXT NOT NULL UNIQUE,
+    strategy_id TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+    created_at TEXT NOT NULL,
+    requested_qty INTEGER NOT NULL DEFAULT 0,
+    filled_qty INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    FOREIGN KEY (signal_id) REFERENCES virtual_signals(signal_id)
+);
+
+CREATE TABLE IF NOT EXISTS virtual_fills (
+    fill_id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL,
+    strategy_id TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+    filled_at TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    price TEXT NOT NULL,
+    commission TEXT NOT NULL,
+    tax TEXT NOT NULL,
+    FOREIGN KEY (order_id) REFERENCES virtual_orders(order_id),
+    FOREIGN KEY (event_id) REFERENCES simulation_events(event_id),
+    UNIQUE (order_id, event_id)
+);
+
+CREATE TABLE IF NOT EXISTS strategy_equity (
+    strategy_id TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    measured_at TEXT NOT NULL,
+    equity TEXT NOT NULL,
+    cash TEXT NOT NULL,
+    unrealized_pnl TEXT NOT NULL,
+    PRIMARY KEY (strategy_id, strategy_version, event_id),
+    FOREIGN KEY (event_id) REFERENCES simulation_events(event_id)
+);
 """
 
 SEED_SQL = """

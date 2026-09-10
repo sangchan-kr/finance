@@ -18,6 +18,39 @@ collection:
   max_symbols: 40
   interval_seconds: 60
 
+simulation:
+  enabled: true
+  starting_cash: 10000000
+  allocation_per_trade: 1000000
+  max_data_delay_seconds: 10
+  fill_participation_rate: 0.25
+  commission_rate: 0.00015
+  sell_tax_rate: 0.0018
+  fallback_spread_bps: 10
+  strategies:
+    orb:
+      enabled: true
+      strategy_id: orb
+      version: "1.0.0"
+      range_start: "09:00"
+      range_end: "09:30"
+      entry_end: "14:30"
+      exit_time: "15:15"
+      breakout_buffer_bps: 5
+      stop_loss_pct: 0.01
+      take_profit_pct: 0.02
+    vwap_pullback:
+      enabled: true
+      strategy_id: vwap_pullback
+      version: "1.0.0"
+      entry_start: "09:30"
+      entry_end: "14:30"
+      exit_time: "15:15"
+      pullback_tolerance_bps: 15
+      min_trend_bps: 10
+      stop_loss_pct: 0.008
+      take_profit_pct: 0.016
+
 risk:
   allowed_symbols: []
   max_symbols_per_day: 3

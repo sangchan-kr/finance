@@ -24,6 +24,7 @@ from .kis_client import KisClient
 from .ledger import Ledger
 from .market_data import MarketData
 from .secrets import Credentials, SecretStore, SecretStoreError
+from .simulation import build_simulation_engine
 from .symbol_catalog import Symbol, SymbolCatalog
 
 
@@ -34,6 +35,9 @@ class TraderApp:
         self.config_path = config_path
         self.ledger = Ledger(settings.storage.database_path)
         self.ledger.initialize()
+        self.simulation_engine = (
+            build_simulation_engine(settings, self.ledger) if settings.simulation.enabled else None
+        )
         self.secret_store = SecretStore()
         self.catalog = SymbolCatalog(
             settings.project_root / ".master" / "symbols.json",
@@ -542,6 +546,7 @@ class TraderApp:
             interval,
             on_snapshot=lambda value: self.events.put(("snapshot", value)),
             on_status=lambda value: self.events.put(("status", value)),
+            simulation_engine=self.simulation_engine,
         )
         self.collector.start()
         self.start_button.configure(state="disabled")

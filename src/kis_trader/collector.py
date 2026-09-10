@@ -10,7 +10,9 @@ from zoneinfo import ZoneInfo
 from .config import Settings
 from .kis_client import KisClient
 from .ledger import Ledger
+from .live_simulation import KisLiveSimulationFeed
 from .market_data import MarketData
+from .simulation import SimulationEngine
 
 SEOUL = ZoneInfo("Asia/Seoul")
 
@@ -34,6 +36,7 @@ class BackgroundCollector:
         on_snapshot: Callable[[Snapshot], None] | None = None,
         on_status: Callable[[str], None] | None = None,
         client_factory: Callable[[Settings], KisClient] = KisClient,
+        simulation_engine: SimulationEngine | None = None,
     ):
         if not symbols:
             raise ValueError("at least one symbol is required")
@@ -46,6 +49,7 @@ class BackgroundCollector:
         self.on_snapshot = on_snapshot or (lambda _: None)
         self.on_status = on_status or (lambda _: None)
         self.client_factory = client_factory
+        self.simulation_engine = simulation_engine
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -94,6 +98,11 @@ class BackgroundCollector:
                 )
                 snapshots.append(snapshot)
                 self.on_snapshot(snapshot)
+            if self.simulation_engine is not None:
+                processed = KisLiveSimulationFeed(market, self.simulation_engine).poll(
+                    list(self.symbols)
+                )
+                self.on_status(f"완성 분봉 {processed}건 가상매매 처리")
         return snapshots
 
     def _run(self) -> None:
@@ -106,4 +115,3 @@ class BackgroundCollector:
                 self.on_status(f"수집 오류: {exc}")
             self._stop_event.wait(self.interval_seconds)
         self.on_status("수집 중지")
-

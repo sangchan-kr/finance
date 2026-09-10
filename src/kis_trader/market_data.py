@@ -24,6 +24,14 @@ class MarketData:
         )
         return body["output"]
 
+    def orderbook(self, symbol: str, market: str = "J") -> dict[str, Any]:
+        body = self.client.get(
+            "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
+            "FHKST01010200",
+            {"FID_COND_MRKT_DIV_CODE": market, "FID_INPUT_ISCD": self._symbol(symbol)},
+        )
+        return body.get("output1", {})
+
     def daily_prices(
         self,
         symbol: str,

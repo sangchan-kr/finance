@@ -24,6 +24,17 @@ def make_settings(tmp_path: Path, **overrides):
             "max_symbols": 40,
             "interval_seconds": 60,
         },
+        "simulation": {
+            "enabled": True,
+            "starting_cash": 10_000_000,
+            "allocation_per_trade": 1_000_000,
+            "max_data_delay_seconds": 10,
+            "fill_participation_rate": 0.25,
+            "commission_rate": 0.00015,
+            "sell_tax_rate": 0.0018,
+            "fallback_spread_bps": 10,
+            "strategies": {},
+        },
         "risk": {
             "allowed_symbols": ["005930"],
             "max_symbols_per_day": 3,

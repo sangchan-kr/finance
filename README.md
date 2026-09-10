@@ -106,6 +106,75 @@ uv run ruff check .
 
 현재 버전에는 위 잠금 검증만 있으며 **주문 전송 메서드는 없습니다**.
 
+## 로컬 가상매매 에이전트
+
+`simulation.enabled: true`이면 백그라운드 수집기가 KIS 당일분봉과 1호가를 읽어
+ORB 및 VWAP 눌림목 전략에 동일한 `CompletedBar` 이벤트를 전달합니다. 각 전략은
+별도의 시작 현금, 현금잔고, 포지션, 신호, 주문, 체결 및 자산곡선을 사용합니다.
+전략은 신호만 생성하며 KIS 주문 API는 호출하지 않습니다.
+
+공통 판단·체결 순서는 다음과 같습니다.
+
+1. 현재 진행 중인 1분봉은 제외하고 종료시각이 확인된 완성봉만 입력합니다.
+2. 이벤트 ID가 이미 처리됐다면 재접속·재생 이벤트로 보고 무시합니다.
+3. 이전 이벤트에서 생성된 대기 주문을 현재 이벤트로 먼저 가상 체결합니다.
+4. 데이터 지연이 `max_data_delay_seconds`를 넘으면 체결과 신규 신호를 중단합니다.
+5. 두 전략이 현재 완성봉을 평가하고 신호만 원장에 기록합니다.
+6. 해당 신호는 반드시 다음 이벤트 이후에만 체결 대상이 됩니다.
+
+매수는 1호 매도호가, 매도는 1호 매수호가를 사용합니다. 과거 재생처럼 호가가
+없으면 봉 종가에 `fallback_spread_bps / 2`를 불리하게 적용합니다. 이벤트당
+체결 가능수량은 실제 1호가 잔량을 우선하고, 없으면 `봉 거래량 ×
+fill_participation_rate`로 제한합니다. 잔량이 부족하면 부분체결 상태로 남아 다음
+이벤트에서 이어집니다. 매수·매도 수수료와 매도세는 각각 설정 비율로 차감됩니다.
+
+### ORB 1.0.0
+
+- 범위: `range_start < 봉 종료시각 <= range_end`인 완성봉의 최고가와 최저가
+- 매수: 포지션이 없고 `range_end < t <= entry_end`이며
+  `종가 > 범위고가 × (1 + breakout_buffer_bps / 10000)`
+- 손절: `종가 / 평균매수가 - 1 <= -stop_loss_pct`
+- 익절: `종가 / 평균매수가 - 1 >= take_profit_pct`
+- 시간청산: 봉 종료시각이 `exit_time` 이상
+
+### VWAP 눌림목 1.0.0
+
+- 전형가격: `(고가 + 저가 + 종가) / 3`
+- 누적 VWAP: `Σ(전형가격 × 봉거래량) / Σ봉거래량`
+- 매수: `entry_start <= t <= entry_end`, 포지션 없음, 저가가
+  `VWAP × (1 + pullback_tolerance_bps / 10000)` 이하에 닿고 종가가 VWAP 및
+  직전 봉 종가보다 높으며 고가가 `VWAP × (1 + min_trend_bps / 10000)` 이상
+- 손절·익절·시간청산: ORB와 동일한 수익률 정의에 각 전략 설정값 적용
+
+과거 1분봉 CSV는 라이브와 동일한 전략 이벤트 루프로 재생합니다.
+
+```powershell
+uv run kis-trader --config config/settings.yaml replay data/sample_bars.csv
+```
+
+현재 완료된 KIS 분봉을 한 번 처리하려면 다음 명령을 사용합니다.
+
+```powershell
+uv run kis-trader --config config/settings.yaml paper-once 005930 009150 042660
+```
+
+`strategy_id`와 `strategy_version`은 모든 가상 신호·주문·체결·자산곡선에
+기록됩니다. SQLite v3는 기존 테이블을 삭제하거나 덮어쓰지 않고 새 테이블만
+추가합니다. 전략별 일간 순수익률, 누적지수, 최대낙폭, 체결수와 승률 계산 및
+외부에서 전달한 KOSPI 100 시계열과의 비교 차트 생성 API도 제공합니다.
+
+KOSPI 100 비교 CSV는 `date,close` 헤더를 사용합니다.
+
+```powershell
+uv run kis-trader --config config/settings.yaml report `
+  --kospi100-csv data/kospi100.csv `
+  --output data/exports/strategy_comparison.png
+```
+
+실전 전환 시에는 전략 코드를 주문 API와 직접 연결하지 않습니다. 동일한 신호
+계약 뒤에 별도 실전 브로커 어댑터를 추가하고, 기존 위험검사·계좌 allowlist·
+실전 잠금·사용자 승인·주문 후 체결대사를 모두 통과시키는 방식으로 확장합니다.
+
 ## 데이터 원칙
 
 SQLite가 원본 원장입니다. 가격과 수익률은 이진 부동소수점 오차를 피하도록
